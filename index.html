@@ -1,0 +1,741 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Votify - Live Abstimmungen</title>
+    
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- React & ReactDOM -->
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    
+    <!-- Babel -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    
+    <!-- Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+
+    <style>
+        /* Custom Animations */
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        .animate-fade-in { animation: fadeIn 0.3s ease-out forwards; }
+    </style>
+</head>
+<body class="bg-slate-50 text-slate-800 min-h-screen">
+
+    <div id="root"></div>
+
+    <script type="text/babel" data-type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInAnonymously, onAuthStateChanged, signInWithCustomToken } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, doc, setDoc, getDoc, collection, addDoc, onSnapshot, updateDoc, serverTimestamp, arrayUnion, runTransaction } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+        // --- KONFIGURATION ---
+        // HINWEIS FÜR DEN NUTZER: Wenn du das auf GitHub hostest, musst du hier deine eigene Config einfügen!
+        // Ersetze den Block unten mit deiner Firebase Config aus der Konsole.
+        
+        const isAIEnvironment = typeof __firebase_config !== 'undefined';
+        
+        const firebaseConfig = isAIEnvironment 
+            ? JSON.parse(__firebase_config) 
+            : {
+                // PLATZHALTER - Hier deine Daten einfügen für GitHub Hosting
+                apiKey: "AIzaSyC4ZxZ-zt_6WhqyuGX4hfTHpoHCeJ2zeN4",
+                authDomain: "votify-8c8cb.firebaseapp.com",
+                projectId: "votify-8c8cb",
+                storageBucket: "votify-8c8cb.firebasestorage.app",
+                messagingSenderId: "495227709436",
+                appId: "1:495227709436:web:8c9805dfdf01797a51f479"
+              };
+
+        const app = initializeApp(firebaseConfig);
+        const auth = getAuth(app);
+        const db = getFirestore(app);
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'votify-app';
+
+        // Hilfsfunktion für Pfade (AI Env vs. Real World)
+        const getCollectionPath = (path) => {
+            if (isAIEnvironment) {
+                // Pfad für die AI-Umgebung
+                return path; // Ganz einfach den Pfad direkt nutzen
+            }
+            // Pfad für deine echte App (einfacher)
+            return path;
+        };
+
+        // --- COMPONENTS ---
+
+        const Spinner = () => (
+            <div className="flex justify-center p-4">
+                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
+            </div>
+        );
+
+        // Startseite: Code eingeben oder erstellen
+        const Home = ({ onJoin, onCreate }) => {
+            const [code, setCode] = React.useState("");
+            const [name, setName] = React.useState("");
+
+            return (
+                <div className="flex flex-col items-center justify-center min-h-screen p-4 bg-gradient-to-br from-blue-500 to-indigo-600">
+                    <div className="bg-white p-8 rounded-2xl shadow-2xl w-full max-w-md text-center animate-fade-in">
+                        <div className="mb-6 flex justify-center text-blue-600">
+                            <i data-lucide="vote" width="48" height="48"></i>
+                        </div>
+                        <h1 className="text-3xl font-bold mb-2 text-slate-800">Votify</h1>
+                        <p className="text-slate-500 mb-8">Live Abstimmungen einfach gemacht.</p>
+
+                        <div className="space-y-4">
+                            <input
+                                type="text"
+                                placeholder="Dein Name"
+                                className="w-full px-4 py-3 border border-slate-200 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none transition"
+                                value={name}
+                                onChange={e => setName(e.target.value)}
+                            />
+                            
+                            <div className="relative">
+                                <div className="absolute inset-0 flex items-center">
+                                    <div className="w-full border-t border-slate-200"></div>
+                                </div>
+                                <div className="relative flex justify-center text-sm">
+                                    <span className="px-2 bg-white text-slate-500">Teilnehmen</span>
+                                </div>
+                            </div>
+
+                            <div className="flex gap-2">
+                                <input
+                                    type="text"
+                                    placeholder="Sitzungscode (z.B. 123456)"
+                                    className="flex-1 px-4 py-3 border border-slate-200 rounded-lg uppercase tracking-widest font-mono focus:ring-2 focus:ring-blue-500 outline-none"
+                                    value={code}
+                                    onChange={e => setCode(e.target.value.toUpperCase())}
+                                    maxLength={6}
+                                />
+                                <button 
+                                    onClick={() => onJoin(code, name)}
+                                    disabled={!code || !name}
+                                    className="bg-blue-600 text-white px-6 py-3 rounded-lg font-semibold hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition shadow-lg"
+                                >
+                                    Los
+                                </button>
+                            </div>
+
+                            <div className="relative mt-6">
+                                <div className="absolute inset-0 flex items-center">
+                                    <div className="w-full border-t border-slate-200"></div>
+                                </div>
+                                <div className="relative flex justify-center text-sm">
+                                    <span className="px-2 bg-white text-slate-500">oder</span>
+                                </div>
+                            </div>
+
+                            <button 
+                                onClick={() => onCreate(name)}
+                                disabled={!name}
+                                className="w-full py-3 border-2 border-blue-600 text-blue-600 rounded-lg font-bold hover:bg-blue-50 transition disabled:opacity-50"
+                            >
+                                Neue Sitzung als Host erstellen
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            );
+        };
+
+        // Host Dashboard
+        const HostDashboard = ({ sessionCode, userId, participants, activePoll, polls, onCreatePoll, onEndPoll, onShowResults, onToggleResults }) => {
+            const [showCreateModal, setShowCreateModal] = React.useState(false);
+
+            return (
+                <div className="max-w-4xl mx-auto p-4 space-y-6">
+                    {/* Header */}
+                    <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-100 flex justify-between items-center flex-wrap gap-4">
+                        <div>
+                            <h2 className="text-sm font-semibold text-slate-400 uppercase tracking-wider">Sitzungscode</h2>
+                            <div className="text-4xl font-mono font-bold text-blue-600 tracking-widest">{sessionCode}</div>
+                        </div>
+                        <div className="flex items-center gap-2 bg-blue-50 px-4 py-2 rounded-full text-blue-700">
+                            <i data-lucide="users" width="20"></i>
+                            <span className="font-bold">{participants.length}</span> Teilnehmer
+                        </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                        {/* Teilnehmerliste */}
+                        <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-100 md:col-span-1 h-fit">
+                            <h3 className="font-bold text-lg mb-4 flex items-center gap-2">
+                                <i data-lucide="user" width="20"></i> Teilnehmer
+                            </h3>
+                            <ul className="space-y-2 max-h-60 overflow-y-auto">
+                                {participants.map(p => (
+                                    <li key={p.id} className="flex items-center gap-2 text-slate-600 bg-slate-50 p-2 rounded">
+                                        <div className="w-2 h-2 bg-green-400 rounded-full"></div>
+                                        {p.name} {p.id === userId ? '(Du)' : ''}
+                                    </li>
+                                ))}
+                                {participants.length === 0 && <li className="text-slate-400 italic">Warte auf Teilnehmer...</li>}
+                            </ul>
+                        </div>
+
+                        {/* Hauptbereich: Aktive Abstimmung oder Erstellen */}
+                        <div className="md:col-span-2 space-y-6">
+                            
+                            {!activePoll ? (
+                                <button 
+                                    onClick={() => setShowCreateModal(true)}
+                                    className="w-full py-8 border-2 border-dashed border-blue-300 rounded-xl flex flex-col items-center justify-center text-blue-500 hover:bg-blue-50 hover:border-blue-500 transition group"
+                                >
+                                    <i data-lucide="plus-circle" width="48" className="mb-2 group-hover:scale-110 transition"></i>
+                                    <span className="font-bold text-lg">Neue Abstimmung starten</span>
+                                </button>
+                            ) : (
+                                <div className="bg-white p-6 rounded-xl shadow-lg border-t-4 border-blue-500 animate-fade-in">
+                                    <div className="flex justify-between items-start mb-4">
+                                        <div>
+                                            <span className="bg-green-100 text-green-700 text-xs font-bold px-2 py-1 rounded uppercase">Läuft</span>
+                                            <h3 className="text-xl font-bold mt-1">{activePoll.title}</h3>
+                                        </div>
+                                        <button 
+                                            onClick={() => onEndPoll(activePoll.id)}
+                                            className="bg-red-100 text-red-600 px-4 py-2 rounded-lg font-semibold hover:bg-red-200 transition"
+                                        >
+                                            Beenden
+                                        </button>
+                                    </div>
+                                    
+                                    <div className="space-y-3">
+                                        {activePoll.options.map(opt => (
+                                            <div key={opt.id} className="relative bg-slate-50 p-3 rounded-lg overflow-hidden">
+                                                {/* Result Bar Preview for Host */}
+                                                <div 
+                                                    className="absolute top-0 left-0 bottom-0 bg-blue-100 transition-all duration-500" 
+                                                    style={{width: `${activePoll.totalVotes > 0 ? (opt.votes / activePoll.totalVotes) * 100 : 0}%`}}
+                                                ></div>
+                                                <div className="relative flex justify-between z-10">
+                                                    <span>{opt.text}</span>
+                                                    <span className="font-bold">{opt.votes || 0}</span>
+                                                </div>
+                                            </div>
+                                        ))}
+                                    </div>
+                                    <div className="mt-4 text-sm text-slate-500 text-right">
+                                        {activePoll.totalVotes} Stimmen gesamt
+                                    </div>
+                                </div>
+                            )}
+
+                            {/* Historie */}
+                            {polls.filter(p => p.status === 'closed').length > 0 && (
+                                <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-100">
+                                    <h3 className="font-bold text-lg mb-4 text-slate-700">Vergangene Abstimmungen</h3>
+                                    <div className="space-y-4">
+                                        {polls.filter(p => p.status === 'closed').map(poll => (
+                                            <div key={poll.id} className="border-b border-slate-100 last:border-0 pb-4 last:pb-0">
+                                                <div className="flex justify-between items-center mb-2">
+                                                    <span className="font-medium">{poll.title}</span>
+                                                    <button 
+                                                        onClick={() => onToggleResults(poll.id, !poll.showResults)}
+                                                        className={`text-sm px-3 py-1 rounded-full border ${poll.showResults ? 'bg-blue-100 text-blue-700 border-blue-200' : 'text-slate-500 border-slate-200'}`}
+                                                    >
+                                                        {poll.showResults ? 'Ergebnisse sichtbar' : 'Ergebnisse verborgen'}
+                                                    </button>
+                                                </div>
+                                            </div>
+                                        ))}
+                                    </div>
+                                </div>
+                            )}
+                        </div>
+                    </div>
+
+                    {/* Modal: Abstimmung erstellen */}
+                    {showCreateModal && (
+                        <CreatePollModal 
+                            onClose={() => setShowCreateModal(false)} 
+                            onSubmit={(data) => {
+                                onCreatePoll(data);
+                                setShowCreateModal(false);
+                            }} 
+                        />
+                    )}
+                </div>
+            );
+        };
+
+        const CreatePollModal = ({ onClose, onSubmit }) => {
+            const [title, setTitle] = React.useState("");
+            const [options, setOptions] = React.useState(["Ja", "Nein"]);
+            const [maxSelections, setMaxSelections] = React.useState(1);
+            const [isNamed, setIsNamed] = React.useState(false);
+
+            const addOption = () => setOptions([...options, ""]);
+            const updateOption = (idx, val) => {
+                const newOpts = [...options];
+                newOpts[idx] = val;
+                setOptions(newOpts);
+            };
+            const removeOption = (idx) => {
+                if (options.length <= 2) return;
+                setOptions(options.filter((_, i) => i !== idx));
+            };
+
+            return (
+                <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+                    <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg p-6 max-h-[90vh] overflow-y-auto animate-fade-in">
+                        <h2 className="text-2xl font-bold mb-4">Neue Abstimmung</h2>
+                        
+                        <div className="space-y-4">
+                            <div>
+                                <label className="block text-sm font-medium text-slate-700 mb-1">Frage / Titel</label>
+                                <input 
+                                    className="w-full border p-2 rounded focus:ring-2 focus:ring-blue-500 outline-none"
+                                    value={title}
+                                    onChange={e => setTitle(e.target.value)}
+                                    placeholder="Was wollen wir essen?"
+                                />
+                            </div>
+
+                            <div>
+                                <label className="block text-sm font-medium text-slate-700 mb-1">Optionen</label>
+                                {options.map((opt, idx) => (
+                                    <div key={idx} className="flex gap-2 mb-2">
+                                        <input 
+                                            className="flex-1 border p-2 rounded focus:ring-2 focus:ring-blue-500 outline-none"
+                                            value={opt}
+                                            onChange={e => updateOption(idx, e.target.value)}
+                                            placeholder={`Option ${idx + 1}`}
+                                        />
+                                        {options.length > 2 && (
+                                            <button onClick={() => removeOption(idx)} className="text-red-500 hover:bg-red-50 p-2 rounded">
+                                                <i data-lucide="trash-2" width="20"></i>
+                                            </button>
+                                        )}
+                                    </div>
+                                ))}
+                                <button onClick={addOption} className="text-blue-600 text-sm font-semibold hover:underline">+ Option hinzufügen</button>
+                            </div>
+
+                            <div className="grid grid-cols-2 gap-4">
+                                <div>
+                                    <label className="block text-sm font-medium text-slate-700 mb-1">Max. Stimmen pro Person</label>
+                                    <input 
+                                        type="number" 
+                                        min="1" 
+                                        max={options.length}
+                                        value={maxSelections}
+                                        onChange={e => setMaxSelections(parseInt(e.target.value))}
+                                        className="w-full border p-2 rounded"
+                                    />
+                                </div>
+                            </div>
+                            
+                            <div className="flex items-center gap-2 bg-yellow-50 p-3 rounded-lg border border-yellow-100">
+                                <input 
+                                    type="checkbox" 
+                                    id="named"
+                                    checked={isNamed}
+                                    onChange={e => setIsNamed(e.target.checked)}
+                                    className="w-5 h-5 text-blue-600 rounded focus:ring-blue-500"
+                                />
+                                <label htmlFor="named" className="text-sm text-slate-700">
+                                    Namen beim Abstimmen speichern (Nicht anonym)
+                                </label>
+                            </div>
+                        </div>
+
+                        <div className="flex justify-end gap-3 mt-8">
+                            <button onClick={onClose} className="px-4 py-2 text-slate-600 hover:bg-slate-100 rounded-lg font-medium">Abbrechen</button>
+                            <button 
+                                onClick={() => onSubmit({ title, options: options.filter(o => o.trim()), maxSelections, isNamed })}
+                                disabled={!title || options.some(o => !o.trim())}
+                                className="px-6 py-2 bg-blue-600 text-white rounded-lg font-bold hover:bg-blue-700 disabled:opacity-50"
+                            >
+                                Starten
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            );
+        };
+
+        // Participant View
+        const ParticipantView = ({ activePoll, hasVoted, onSubmitVote, pollResults, closedPolls }) => {
+            const [selections, setSelections] = React.useState([]);
+
+            React.useEffect(() => {
+                setSelections([]); // Reset selection on new poll
+            }, [activePoll?.id]);
+
+            const toggleSelection = (optId) => {
+                if (selections.includes(optId)) {
+                    setSelections(selections.filter(id => id !== optId));
+                } else {
+                    if (selections.length < activePoll.maxSelections) {
+                        setSelections([...selections, optId]);
+                    }
+                }
+            };
+
+            if (!activePoll && closedPolls.length === 0) {
+                return (
+                    <div className="flex flex-col items-center justify-center min-h-[50vh] text-slate-500 animate-fade-in">
+                        <div className="bg-blue-50 p-6 rounded-full mb-4 animate-pulse">
+                            <i data-lucide="coffee" width="48" height="48" className="text-blue-400"></i>
+                        </div>
+                        <h2 className="text-xl font-semibold">Warte auf Abstimmung...</h2>
+                        <p>Der Host bereitet sicher gerade etwas Spannendes vor.</p>
+                    </div>
+                );
+            }
+
+            return (
+                <div className="max-w-lg mx-auto p-4 space-y-8">
+                    {/* Aktive Abstimmung */}
+                    {activePoll && (
+                        <div className="bg-white rounded-2xl shadow-lg overflow-hidden animate-fade-in">
+                            <div className="bg-blue-600 p-6 text-white">
+                                <span className="text-blue-200 text-sm font-bold uppercase tracking-wider">Aktive Abstimmung</span>
+                                <h2 className="text-2xl font-bold mt-1">{activePoll.title}</h2>
+                                {activePoll.isNamed && (
+                                    <div className="flex items-center gap-1 text-xs mt-2 bg-blue-700/50 w-fit px-2 py-1 rounded">
+                                        <i data-lucide="eye" width="14"></i>
+                                        Nicht Anonym
+                                    </div>
+                                )}
+                            </div>
+                            
+                            <div className="p-6">
+                                {hasVoted ? (
+                                    <div className="text-center py-8">
+                                        <div className="inline-flex bg-green-100 p-4 rounded-full text-green-600 mb-4">
+                                            <i data-lucide="check" width="32" height="32"></i>
+                                        </div>
+                                        <h3 className="text-xl font-bold text-slate-800">Stimme abgegeben!</h3>
+                                        <p className="text-slate-500">Warte auf Ergebnisse...</p>
+                                    </div>
+                                ) : (
+                                    <div className="space-y-3">
+                                        <p className="text-sm text-slate-500 mb-2">
+                                            Wähle bis zu {activePoll.maxSelections} Option(en):
+                                        </p>
+                                        {activePoll.options.map(opt => {
+                                            const isSelected = selections.includes(opt.id);
+                                            return (
+                                                <button
+                                                    key={opt.id}
+                                                    onClick={() => toggleSelection(opt.id)}
+                                                    className={`w-full text-left p-4 rounded-xl border-2 transition-all flex justify-between items-center ${
+                                                        isSelected 
+                                                        ? 'border-blue-600 bg-blue-50 text-blue-800' 
+                                                        : 'border-slate-100 hover:border-slate-300 text-slate-700'
+                                                    }`}
+                                                >
+                                                    <span className="font-medium">{opt.text}</span>
+                                                    {isSelected && <i data-lucide="check-circle-2" className="text-blue-600"></i>}
+                                                </button>
+                                            );
+                                        })}
+                                        
+                                        <button
+                                            onClick={() => onSubmitVote(activePoll.id, selections)}
+                                            disabled={selections.length === 0}
+                                            className="w-full bg-blue-600 text-white py-4 rounded-xl font-bold text-lg mt-6 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed shadow-lg transition"
+                                        >
+                                            Abstimmen
+                                        </button>
+                                    </div>
+                                )}
+                            </div>
+                        </div>
+                    )}
+
+                    {/* Ergebnisse vergangener Abstimmungen */}
+                    {closedPolls.filter(p => p.showResults).length > 0 && (
+                         <div className="space-y-4">
+                            <h3 className="text-slate-500 font-bold uppercase tracking-wider text-sm text-center">Ergebnisse</h3>
+                            {closedPolls.filter(p => p.showResults).map(poll => (
+                                <div key={poll.id} className="bg-white p-6 rounded-xl shadow-sm border border-slate-100">
+                                    <h4 className="font-bold text-lg mb-4">{poll.title}</h4>
+                                    <div className="space-y-3">
+                                        {poll.options.map(opt => {
+                                            const percentage = poll.totalVotes > 0 ? Math.round((opt.votes / poll.totalVotes) * 100) : 0;
+                                            return (
+                                                <div key={opt.id}>
+                                                    <div className="flex justify-between text-sm mb-1">
+                                                        <span>{opt.text}</span>
+                                                        <span className="font-bold">{percentage}% ({opt.votes})</span>
+                                                    </div>
+                                                    <div className="h-3 bg-slate-100 rounded-full overflow-hidden">
+                                                        <div className="h-full bg-slate-800 rounded-full" style={{width: `${percentage}%`}}></div>
+                                                    </div>
+                                                </div>
+                                            );
+                                        })}
+                                    </div>
+                                </div>
+                            ))}
+                         </div>
+                    )}
+                </div>
+            );
+        };
+
+        // --- MAIN APP LOGIC ---
+
+        const App = () => {
+            const [user, setUser] = React.useState(null);
+            const [loading, setLoading] = React.useState(true);
+            const [currentSession, setCurrentSession] = React.useState(null);
+            const [sessionCode, setSessionCode] = React.useState(null);
+            const [isHost, setIsHost] = React.useState(false);
+            const [userName, setUserName] = React.useState("");
+            
+            // Data state
+            const [participants, setParticipants] = React.useState([]);
+            const [polls, setPolls] = React.useState([]);
+            const [myVotes, setMyVotes] = React.useState({}); // pollId -> boolean
+
+            // Auth Initialization
+            React.useEffect(() => {
+                const initAuth = async () => {
+                    try {
+                        if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+                            await signInWithCustomToken(auth, __initial_auth_token);
+                        } else {
+                            await signInAnonymously(auth);
+                        }
+                    } catch(e) {
+                        console.error("Auth Error", e);
+                    }
+                };
+                initAuth();
+                return onAuthStateChanged(auth, (u) => {
+                    setUser(u);
+                    setLoading(false);
+                });
+            }, []);
+
+            // Session Listeners
+            React.useEffect(() => {
+                if (!user || !sessionCode) return;
+
+                // 1. Listen to participants
+                const partsUnsub = onSnapshot(
+                    collection(db, getCollectionPath(`sessions/${sessionCode}/participants`)),
+                    (snapshot) => {
+                        const p = [];
+                        snapshot.forEach(doc => p.push({id: doc.id, ...doc.data()}));
+                        setParticipants(p);
+                    },
+                    (error) => console.error("Participants error", error)
+                );
+
+                // 2. Listen to polls
+                const pollsUnsub = onSnapshot(
+                    collection(db, getCollectionPath(`sessions/${sessionCode}/polls`)),
+                    (snapshot) => {
+                        const p = [];
+                        snapshot.forEach(doc => p.push({id: doc.id, ...doc.data()}));
+                        // Sort by created at desc (needs simplified sorting for client)
+                        p.sort((a, b) => b.createdAt?.seconds - a.createdAt?.seconds);
+                        setPolls(p);
+                    },
+                    (error) => console.error("Polls error", error)
+                );
+
+                // 3. Listen to my own votes (to disable voting button)
+                 const votesUnsub = onSnapshot(
+                    collection(db, getCollectionPath(`sessions/${sessionCode}/votes`)),
+                    (snapshot) => {
+                        const votedPolls = {};
+                        snapshot.forEach(doc => {
+                            const data = doc.data();
+                            if (data.userId === user.uid) {
+                                votedPolls[data.pollId] = true;
+                            }
+                        });
+                        setMyVotes(votedPolls);
+                    },
+                    (error) => console.error("Votes error", error)
+                );
+
+                return () => {
+                    partsUnsub();
+                    pollsUnsub();
+                    votesUnsub();
+                };
+            }, [user, sessionCode]);
+
+            // Icons setup
+            React.useEffect(() => {
+                if (typeof lucide !== 'undefined') lucide.createIcons();
+            });
+
+            // ACTIONS
+
+            const handleCreateSession = async (hostName) => {
+                if (!user) return;
+                const code = Math.floor(100000 + Math.random() * 900000).toString(); // 6 digits
+                
+                // Create Session Doc
+                await setDoc(doc(db, getCollectionPath('sessions'), code), {
+                    hostId: user.uid,
+                    createdAt: serverTimestamp(),
+                    status: 'active'
+                });
+
+                // Add Host as Participant
+                await setDoc(doc(db, getCollectionPath(`sessions/${code}/participants`), user.uid), {
+                    name: hostName,
+                    joinedAt: serverTimestamp()
+                });
+
+                setUserName(hostName);
+                setSessionCode(code);
+                setIsHost(true);
+            };
+
+            const handleJoinSession = async (code, name) => {
+                if (!user) return;
+                
+                // Check if session exists
+                const sessDoc = await getDoc(doc(db, getCollectionPath('sessions'), code));
+                if (!sessDoc.exists()) {
+                    alert("Sitzung nicht gefunden!");
+                    return;
+                }
+
+                // Add User as Participant
+                await setDoc(doc(db, getCollectionPath(`sessions/${code}/participants`), user.uid), {
+                    name: name,
+                    joinedAt: serverTimestamp()
+                });
+
+                setUserName(name);
+                setSessionCode(code);
+                setIsHost(sessDoc.data().hostId === user.uid);
+            };
+
+            const handleCreatePoll = async ({ title, options, maxSelections, isNamed }) => {
+                if (!sessionCode) return;
+                
+                // First close any active poll? Optional. Let's just add a new one.
+                // Format options
+                const formattedOptions = options.map((text, i) => ({
+                    id: `opt_${Date.now()}_${i}`,
+                    text,
+                    votes: 0
+                }));
+
+                await addDoc(collection(db, getCollectionPath(`sessions/${sessionCode}/polls`)), {
+                    title,
+                    options: formattedOptions,
+                    maxSelections,
+                    isNamed,
+                    status: 'active', // active, closed
+                    showResults: false,
+                    totalVotes: 0,
+                    createdAt: serverTimestamp()
+                });
+            };
+
+            const handleVote = async (pollId, selectedOptionIds) => {
+                // Optimistic update handled by UI state, firestore handles real data
+                
+                // Record the vote in a subcollection to prevent double voting securely
+                await addDoc(collection(db, getCollectionPath(`sessions/${sessionCode}/votes`)), {
+                    pollId,
+                    userId: user.uid,
+                    voterName: isNamedPoll(pollId) ? userName : 'Anonym',
+                    selections: selectedOptionIds
+                });
+
+                // Update the Poll counts atomically
+                const pollRef = doc(db, getCollectionPath(`sessions/${sessionCode}/polls`), pollId);
+                
+                await runTransaction(db, async (transaction) => {
+                    const pollDoc = await transaction.get(pollRef);
+                    if (!pollDoc.exists()) return;
+                    
+                    const data = pollDoc.data();
+                    const newOptions = data.options.map(opt => {
+                        if (selectedOptionIds.includes(opt.id)) {
+                            return { ...opt, votes: (opt.votes || 0) + 1 };
+                        }
+                        return opt;
+                    });
+                    
+                    transaction.update(pollRef, {
+                        options: newOptions,
+                        totalVotes: (data.totalVotes || 0) + 1
+                    });
+                });
+            };
+
+            const isNamedPoll = (pollId) => {
+                const p = polls.find(po => po.id === pollId);
+                return p ? p.isNamed : false;
+            };
+
+            const handleEndPoll = async (pollId) => {
+                await updateDoc(doc(db, getCollectionPath(`sessions/${sessionCode}/polls`), pollId), {
+                    status: 'closed'
+                });
+            };
+
+            const handleToggleResults = async (pollId, shouldShow) => {
+                 await updateDoc(doc(db, getCollectionPath(`sessions/${sessionCode}/polls`), pollId), {
+                    showResults: shouldShow
+                });
+            };
+
+            // Render
+            if (loading) return <Spinner />;
+
+            if (!sessionCode) {
+                return <Home onJoin={handleJoinSession} onCreate={handleCreateSession} />;
+            }
+
+            const activePoll = polls.find(p => p.status === 'active');
+            const closedPolls = polls.filter(p => p.status === 'closed');
+
+            if (isHost) {
+                return (
+                    <HostDashboard 
+                        sessionCode={sessionCode}
+                        userId={user.uid}
+                        participants={participants}
+                        activePoll={activePoll}
+                        polls={polls}
+                        onCreatePoll={handleCreatePoll}
+                        onEndPoll={handleEndPoll}
+                        onShowResults={handleToggleResults}
+                        onToggleResults={handleToggleResults}
+                    />
+                );
+            }
+
+            return (
+                <ParticipantView 
+                    activePoll={activePoll}
+                    hasVoted={activePoll && myVotes[activePoll.id]}
+                    onSubmitVote={handleVote}
+                    pollResults={closedPolls} // User only sees closed polls results if allowed? 
+                    // Actually user sees results based on `showResults` flag inside poll object
+                    closedPolls={closedPolls}
+                />
+            );
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
